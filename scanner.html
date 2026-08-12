@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>FIQ Barcode Scanner</title>
+  <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: #131527;
+      color: #e2e8f0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    }
+    .wrap { max-width: 520px; margin: 0 auto; padding: 18px; }
+    .card {
+      background: #1e223d;
+      border: 1px solid #2d3358;
+      border-radius: 16px;
+      padding: 16px;
+      box-shadow: 0 10px 25px -5px rgba(0,0,0,.4);
+    }
+    h1 { font-size: 18px; margin: 0 0 4px; color: #fff; }
+    p { font-size: 12px; color: #94a3b8; margin: 0 0 14px; }
+    #reader video { width: 100% !important; border-radius: 12px; }
+    #reader { width: 100%; overflow: hidden; border-radius: 12px; }
+    .status {
+      margin-top: 12px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: #131527;
+      border: 1px solid #2d3358;
+      font-size: 12px;
+      color: #94a3b8;
+      text-align: center;
+    }
+    button {
+      width: 100%;
+      margin-top: 12px;
+      padding: 11px 14px;
+      border: 0;
+      border-radius: 10px;
+      background: #334155;
+      color: #fff;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    button:active { transform: scale(.99); }
+    .error {
+      color: #fca5a5;
+      border-color: rgba(239,68,68,.35);
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>FIQ Barcode Scanner</h1>
+      <p>Arahkan kamera belakang ke barcode/QR. Hasil akan dikirim kembali ke Form Checksheet.</p>
+
+      <div id="reader"></div>
+      <div id="status" class="status">Meminta akses kamera...</div>
+      <button type="button" onclick="closeScanner()">Tutup Scanner</button>
+    </div>
+  </div>
+
+  <script>
+    let scanner = null;
+    let finished = false;
+
+    const params = new URLSearchParams(window.location.search);
+    const returnUrl = params.get('returnUrl') || '';
+
+    function setStatus(message, isError) {
+      const el = document.getElementById('status');
+      el.textContent = message;
+      el.className = 'status' + (isError ? ' error' : '');
+    }
+
+    function sendResult(value) {
+      if (finished) return;
+      finished = true;
+
+      try {
+        if (window.opener && !window.opener.closed) {
+          window.opener.postMessage({
+            type: 'FIQ_BARCODE_SCANNED',
+            value: value
+          }, '*');
+        }
+      } catch (err) {
+        console.error(err);
+      }
+
+      stopScanner().finally(() => {
+        // Tutup tab scanner setelah hasil dikirim.
+        try { window.close(); } catch (e) {}
+        setStatus('Barcode berhasil: ' + value, false);
+      });
+    }
+
+    async function stopScanner() {
+      if (!scanner) return;
+      try {
+        await scanner.stop();
+      } catch (e) {}
+      try {
+        scanner.clear();
+      } catch (e) {}
+      scanner = null;
+    }
+
+    function closeScanner() {
+      stopScanner().finally(() => {
+        try { window.close(); } catch (e) {}
+        setStatus('Scanner ditutup.', false);
+      });
+    }
+
+    async function startScanner() {
+      if (!window.isSecureContext) {
+        setStatus('Scanner harus dibuka melalui HTTPS.', true);
+        return;
+      }
+
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        setStatus('Browser tidak mendukung akses kamera langsung.', true);
+        return;
+      }
+
+      try {
+        scanner = new Html5Qrcode('reader');
+
+        const config = {
+          fps: 10,
+          qrbox: { width: 280, height: 160 },
+          aspectRatio: 1.7777778,
+          disableFlip: false
+        };
+
+        setStatus('Kamera aktif. Arahkan ke barcode...', false);
+
+        await scanner.start(
+          { facingMode: { exact: 'environment' } },
+          config,
+          function(decodedText) {
+            sendResult(decodedText);
+          },
+          function() {
+            // Error per-frame diabaikan.
+          }
+        );
+      } catch (err) {
+        console.error('Camera error:', err);
+
+        // Fallback: beberapa perangkat tidak menerima exact environment.
+        try {
+          await stopScanner();
+          scanner = new Html5Qrcode('reader');
+
+          const config = {
+            fps: 10,
+            qrbox: { width: 280, height: 160 },
+            disableFlip: false
+          };
+
+          await scanner.start(
+            { facingMode: 'environment' },
+            config,
+            function(decodedText) {
+              sendResult(decodedText);
+            },
+            function() {}
+          );
+
+          setStatus('Kamera aktif. Arahkan ke barcode...', false);
+        } catch (err2) {
+          console.error('Fallback camera error:', err2);
+          setStatus(
+            'Kamera tidak dapat dibuka. Pastikan izin kamera browser diizinkan.',
+            true
+          );
+        }
+      }
+    }
+
+    window.addEventListener('beforeunload', function() {
+      stopScanner();
+    });
+
+    startScanner();
+  </script>
+</body>
+</html>
